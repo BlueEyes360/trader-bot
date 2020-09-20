@@ -4,33 +4,59 @@
     Exchange: Coinbase
     From: USD
     To: BTC
+    cbpro from https://github.com/danpaquin/coinbasepro-python
 """
 
 
 from time import sleep
+import datetime
 from random import random
 import cbpro
 import json
 
 from secrets import Viewer_CoinBase_Secret, Viewer_CoinBase_Key, Passphrase, Sandbox_URL, Sandbox_Secret, Sandbox_Key, Sandbox_Passphrase, Sandbox_USD_GUID, Sandbox_BTC_GUID
+from secrets import Buyer_CoinBase_Secret, Buyer_CoinBase_Key, Buyer_Passphrase, Buyer_USD_GUID, Buyer_BTC_GUID
 
 class TraderBot:
 
     def __init__(self):
         self.isNextOperationBuy = True
 
-        self.UPWARD_TREND_THRESHOLD = 1.5
-        self.DIP_THRESHOLD = -2.25
 
-        self.PROFIT_THRESHOLD = 1.25
+        self.UPWARD_TREND_THRESHOLD = 1.0
+        self.DIP_THRESHOLD = -1.0
+        self.PROFIT_THRESHOLD = 1.5
         self.STOP_LOSS_THRESHOLD = -2.0
+
+        # self.UPWARD_TREND_THRESHOLD = 1.5
+        # self.DIP_THRESHOLD = -1.75
+        # self.PROFIT_THRESHOLD = 1.35
+        # self.STOP_LOSS_THRESHOLD = -2.0
+
+        # self.UPWARD_TREND_THRESHOLD = 3.0
+        # self.DIP_THRESHOLD = -4.5
+        # self.PROFIT_THRESHOLD = 2.5
+        # self.STOP_LOSS_THRESHOLD = -4.0
+
+        # self.UPWARD_TREND_THRESHOLD = 0.75
+        # self.DIP_THRESHOLD = -1.125
+        # self.PROFIT_THRESHOLD = 0.625
+        # self.STOP_LOSS_THRESHOLD = -1.0
+
+        # Any change, do something for testing
+        # self.UPWARD_TREND_THRESHOLD = 0.0075
+        # self.DIP_THRESHOLD = -0.0125
+        # self.PROFIT_THRESHOLD = 0.0125
+        # self.STOP_LOSS_THRESHOLD = -0.05
+
 
         self.BALANCE = 100.0
 
-        # self.client = cbpro.PublicClient()
-        self.client = cbpro.AuthenticatedClient(Sandbox_Key, Sandbox_Secret, Sandbox_Passphrase, api_url=Sandbox_URL)
-        _initResponse = self.client.get_product_ticker(product_id='BTC-USD')
-        self.lastOpPrice = float(_initResponse["price"])
+        self.client = cbpro.AuthenticatedClient(Buyer_CoinBase_Key, Buyer_CoinBase_Secret, Buyer_Passphrase)
+
+        # self.client = cbpro.AuthenticatedClient(Sandbox_Key, Sandbox_Secret, Sandbox_Passphrase, api_url=Sandbox_URL)
+        # self.client = cbpro.AuthenticatedClient(Viewer_CoinBase_Key, Viewer_CoinBase_Secret, Passphrase)
+        self.lastOpPrice = self.getMarketPrice()
 
     def __str__(self):
         """ Used natively by Python to print out TraderBot representation """
@@ -44,8 +70,8 @@ class TraderBot:
 
     def getBalance(self):
         """ Get amount of USD currently in account """
-        print("getBalances()")
-        response = self.client.get_account(Sandbox_USD_GUID)
+        # print("getBalances()")
+        response = self.client.get_account(Buyer_USD_GUID)
 
         return(float(response["balance"]))
 
@@ -64,6 +90,8 @@ class TraderBot:
         print("placeSellOrder() - {}".format(amount))
         response = self.client.place_market_order(product_id='BTC-USD', side='sell', funds=amount)
 
+        return response
+
 
     def placeBuyOrder(self):
         """ """
@@ -81,11 +109,22 @@ class TraderBot:
 
     def startBot(self):
         """ """
+        print("Beginning TraderBot:\n\tInitial price: {}".format(self.lastOpPrice))
+        counter = 0
         try:
             while True:
                 # print("attemptToMakeTrade()")
+                print(".", end='', flush=True)
+
+                if counter % 20 == 0:
+                    currentPrice = self.getMarketPrice()
+                    percentageDiff = ( currentPrice - self.lastOpPrice) / self.lastOpPrice * 100
+                    print("\nTime: {}\tCurr: {}\tLast: {}\t{}% diff".format(datetime.datetime.now(), currentPrice, self.lastOpPrice, percentageDiff))
+                counter += 1
+
                 self.attemptToMakeTrade()
                 sleep(30)
+
         except KeyboardInterrupt as exc:
             print("Exiting...")
 
@@ -93,21 +132,30 @@ class TraderBot:
     def tryToBuy(self, percentDiff):
         """ """
         if percentDiff >= self.UPWARD_TREND_THRESHOLD or percentDiff <= self.DIP_THRESHOLD:
-            # self.lastOpPrice = self.placeBuyOrder()
             previousOpPrice = self.lastOpPrice
+            response = self.placeBuyOrder()
+            pp(response)
+            # orderNum = response["id"]
+            # while response["status"] is "pending":
+            #     response = self.client.get_order(orderNum)
+            #     if response["status"] is not "pending":
+
             self.lastOpPrice = self.getMarketPrice()
             self.isNextOperationBuy = False
-            print("tryToBuy() successful!\nnewLastOp:\t{}%\nprevLastOp:\t{}\n\t".format(percentDiff, self.lastOpPrice, previousOpPrice))
+            print("\ntryToBuy() successful!\n{} %\nnewLastOp:\t{}\nprevLastOp:\t{}\n\t".format(percentDiff, self.lastOpPrice, previousOpPrice))
 
 
     def tryToSell(self, percentDiff):
         """ """
         if percentDiff >= self.PROFIT_THRESHOLD or percentDiff <= self.STOP_LOSS_THRESHOLD:
-            # self.lastOpPrice = self.placeSellOrder()
             previousOpPrice = self.lastOpPrice
+            response = self.placeSellOrder()
+            pp(response)
+            # orderNum = response["id"]
+
             self.lastOpPrice = self.getMarketPrice()
             self.isNextOperationBuy = True
-            print("tryToSell() successful!\nnewLastOp:\t{}%\nprevLastOp:\t{}\n\t".format(percentDiff, self.lastOpPrice, previousOpPrice))
+            print("\ntryToSell() successful!\n{} %\nnewLastOp:\t{}\nprevLastOp:\t{}\n\t".format(percentDiff, self.lastOpPrice, previousOpPrice))
 
 
     def attemptToMakeTrade(self):
@@ -132,13 +180,14 @@ class TraderBot:
         """
         balance = self.getBalance()
         amount = 100
+
         if ((balance / 2) < 100):
             amount = balance / 2
 
         if balance < 20:
             return 0
 
-        return amount
+        return float("{:.2f}".format(amount))
 
 
     def calculateSellAmount(self):
@@ -147,10 +196,10 @@ class TraderBot:
 
             Currently sells are for the entirety of the amount of BTC currently owned
         """
-        response = self.client.get_account(Sandbox_BTC_GUID)
-        amount = response["balance"]
+        response = self.client.get_account(Buyer_BTC_GUID)
+        amount = float(response["balance"]) * self.getMarketPrice()
 
-        return amount
+        return float("{:.2f}".format(amount))
 
 
 def pp(obj):
@@ -160,10 +209,41 @@ def pp(obj):
 
 if __name__ == "__main__":
     tb = TraderBot()
+    tb.startBot()
+    # tb.tryToBuy(1.7)
     # balance = tb.getBalance()
-    res = tb.placeBuyOrder()
+    # res = tb.placeBuyOrder()
+    # res = tb.placeSellOrder()
+    # pp(res)
 
-    pp(res)
+    # response = tb.client.place_market_order(product_id='BTC-USD', side='buy', funds=50.0)
+    # print("Buy:")
+    # pp(response)
+
+    # response = tb.client.place_market_order(product_id='BTC-USD', side='sell', funds=50.0)
+    # print("Sell:")
+    # pp(response)
+
+    # depositParams = {
+    #     'amount': '100.00', # Currency determined by account specified
+    #     'coinbase_account_id': '1JmYrFBLMSCLBwoL87gdQ5Qc9MLvb2egKk',
+    #     'currency': 'BTC',
+    #     'payment_method_id': '1JmYrFBLMSCLBwoL87gdQ5Qc9MLvb2egKk'
+    # }
+
+    # res = tb.client.deposit(amount=100.00, currency="USD", payment_method_id='6a23926d-74b6-4373-8434-9d437c2bafb2')
+    # res = tb.client.deposit(amount=100.00, currency="USD", payment_method_id='e49c8d15-547b-464e-ac3d-4b9d20b360ec')
+
+    # res = tb.client.crypto_withdraw(amount=1.0, currency="BTC", crypto_address='1JmYrFBLMSCLBwoL87gdQ5Qc9MLvb2egKk')
+
+    # pp(tb.placeBuyOrder())
+    # payments = tb.client.get_payment_methods()
+    # accounts = tb.client.get_accounts()
+    # currencies = tb.client.get_currencies()
+    # pp(payments)
+    # pp(accounts)
+    # pp(currencies)
+
     # print("Initial price:\t{}\n".format(tb.lastOpPrice))
     # tb.startBot()
     # price = tb.getMarketPrice()
